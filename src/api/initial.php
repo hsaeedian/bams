@@ -1,5 +1,4 @@
 <?php
-session_start();
-require_once('../config.php');
-require_once('../lib/util.php');
-login_require();
+require_once __DIR__ . '/../lib/bootstrap.php';
+header('Content-Type: application/xml; charset=UTF-8');
+$user = require_user();

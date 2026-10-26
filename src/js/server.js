@@ -53,9 +53,11 @@ export default class Server extends Node {
         type = (this.type == 'A') ? 'AdobeConnect' : 'BigBlueButton';
         cardHeader.innerHTML = `
             <span class="header-icon ger-bg1"><i class="fas fa-server"></i></span>
-            <span class="header-title ms-2 me-2">${title}</span>
+            <span class="header-title ms-2 me-2"></span>
             <span class="badge rounded-pill bg-success d-none d-md-block">${type}</span>
         `;
+
+        cardHeader.querySelector('.header-title').textContent = title;
 
         info.className = 'row';
         info.innerHTML = `
@@ -119,7 +121,7 @@ export default class Server extends Node {
     }
 
     _cleanMeetingWrapper() {
-        for (let n of this._meetingWrapper.children) {
+        for (let n of Array.from(this._meetingWrapper.children)) {
             let found = false;
             for (let m of this.meetings) {
                 if (m.node.getAttribute('data-id') == n.getAttribute('data-id')) {
@@ -134,7 +136,7 @@ export default class Server extends Node {
 
     _addMeeting(meeting) {
         let id = `m-${this.id}-${meeting.id}`;
-        let old = this._meetingWrapper.querySelector(`.meeting-col[data-id="${id}"`);
+        let old = Array.from(this._meetingWrapper.children).find(n => n.getAttribute('data-id') === id);
         if (old)
             this._meetingWrapper.replaceChild(meeting.node, old);
         else
@@ -178,12 +180,12 @@ export default class Server extends Node {
     }
 
     _getResource() {
-        let url = `api/resource.php?id=${this.id}`;
+        let url = `api/resource.php?id=${encodeURIComponent(this.id)}`;
         this.request(url, dom => {
             let data = dom.querySelector('data');
             let reg;
             if (data) {
-                reg = /(\d+)-(\d+)-(\d+)/i.exec(data.innerText);
+                reg = /(\d+)-(\d+)-(\d+)/i.exec(data.textContent);
                 if (reg) {
                     this.disk = (reg[3] / 1024).toFixed(2);
                     this.cpu = reg[1];
@@ -197,7 +199,7 @@ export default class Server extends Node {
     }
 
     update() {
-        let url = `api/server-item.php?id=${this.id}`;
+        let url = `api/server-item.php?id=${encodeURIComponent(this.id)}`;
         this.request(url, dom => {
             this._dom = dom.querySelector('response');
             this.meetings = [];

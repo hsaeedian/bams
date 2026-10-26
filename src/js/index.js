@@ -14,6 +14,7 @@ else
 
 if (loginPage) {
     new Login(document);
-} else {
+} else if (!document.getElementById('admin-page')) {
     new Dashboard(document);
 }
+for (const node of document.querySelectorAll('[data-admin-label]')) node.textContent = Lang.val[node.dataset.adminLabel] || node.textContent;

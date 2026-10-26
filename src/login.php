@@ -23,7 +23,8 @@
             <div id="login-invalid" class="alert alert-danger shadow-sm" role="alert"></div>
             <div class="card shadow-sm mb-3">
                 <div class="card-body">
-                    <form id="login-form" class="needs-validation" method="post" action="<?php echo URL; ?>login.php" role="login">
+                    <form id="login-form" class="needs-validation" method="post" action="<?php echo h(URL); ?>login.php" role="login">
+                        <input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>">
                         <div id="login-user" class="form-floating mb-3">
                             <input type="text" dir="ltr" class="form-control" name="username" id="username" placeholder="Username">
                             <label for="username"></label>

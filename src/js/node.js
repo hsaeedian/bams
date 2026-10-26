@@ -10,11 +10,11 @@ export default class Node {
     _createNode() { }
 
     _find(name, stringType = true) {
-        let tag = this._dom.querySelector(name);
+        let tag = Array.from(this._dom.getElementsByTagName('*')).find(n => n.localName.toLowerCase() === name.toLowerCase());
         if (tag) {
-            let value = tag.textContent || tag.innerText;
+            let value = tag.textContent;
             if (stringType)
-                return value.trim();
+                return value;
             else
                 return parseInt(value);
         }
@@ -32,7 +32,7 @@ export default class Node {
         return li;
     }
 
-    _createBadgeItem(key, value, className) {
+    _createBadgeItem(key, value, className, trustedIcons = false) {
         let li = document.createElement('li');
         let keySpan = document.createElement('span');
         let valueSpan = document.createElement('span');
@@ -41,7 +41,8 @@ export default class Node {
         keySpan.className = 'key';
         valueSpan.className = 'badge bg-primary rounded-pill value';
         keySpan.innerText = key;
-        valueSpan.innerHTML = value;
+        if (trustedIcons) valueSpan.innerHTML = value;
+        else valueSpan.textContent = value;
         li.appendChild(keySpan);
         li.appendChild(valueSpan);
         return li;
@@ -49,7 +50,8 @@ export default class Node {
 
     _createLinkItem(key, value, className) {
         let a = document.createElement('a');
-        a.href = value;
+        if (/^https?:\/\//i.test(value)) a.href = value;
+        a.rel = 'noopener noreferrer';
         a.innerText = key;
         a.target = '_blank';
         a.className = `list-group-item list-group-item-action ${className}`;
@@ -59,10 +61,9 @@ export default class Node {
     request(url, callBack, postData = null) {
         let xhttp = new XMLHttpRequest();
         xhttp.onreadystatechange = function () {
-            if (this.readyState == 4 && this.status == 200) {
-                let div = document.createElement('div');
-                div.innerHTML = this.responseText;
-                callBack(div);
+            if (this.readyState === 4) {
+                const dom = new DOMParser().parseFromString(this.responseText, 'application/xml');
+                if (!dom.querySelector('parsererror')) callBack(dom);
             }
         };
         if (postData) {

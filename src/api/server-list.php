@@ -1,36 +1,11 @@
 <?php
-require_once('initial.php');
-
-$user = getUser($_SESSION['user']);
-$acl = $user['acl'] ?? null;
-
-$dom = new DOMDocument('1.0', 'utf-8');
-$dom->preserveWhiteSpace = false;
-$dom->formatOutput = true;
-
-$response = $dom->createElement('response');
-$returncode = $dom->createElement('returncode', 'SUCCESS');
-$response->appendChild($returncode);
-
-foreach (SERVERS as $s) {
-    if ($acl && !in_array($s['id'], $acl))
-        continue;
-
-    if (!isSiteAvailible('http://' . $s['domain']))
-        continue;
-
-    $server = $dom->createElement('server');
-    $id = $dom->createElement('id', $s['id']);
-    $type = $dom->createElement('type', $s['type']);
-    $domain = $dom->createElement('domain', $s['domain']);
-    $title = $dom->createElement('serverTitle', $s['title'] ?? '');
-
-    $server->appendChild($id);
-    $server->appendChild($type);
-    $server->appendChild($domain);
-    $server->appendChild($title);
-    $response->appendChild($server);
+require_once __DIR__ . '/initial.php';
+$doc = new DOMDocument('1.0','UTF-8'); $root = $doc->createElement('response'); $doc->appendChild($root);
+xml_text($root,'returncode','SUCCESS');
+foreach (sql('SELECT * FROM servers WHERE enabled=1 ORDER BY id')->fetchAll() as $s) {
+    if (!can_access($user,$s)) continue;
+    $node = $doc->createElement('server'); $root->appendChild($node);
+    foreach (['id','type','domain'] as $k) xml_text($node,$k,$s[$k]);
+    xml_text($node,'serverTitle',$s['title']);
 }
-
-$dom->appendChild($response);
-echo $dom->saveXML();
+echo $doc->saveXML();

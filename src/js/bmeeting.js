@@ -17,8 +17,6 @@ export default class BMeeting extends Node {
         this.id = this._find('meetingid');
         this.title = this._find('bbb-context');
         this.name = this._find('meetingname');
-        this.moderatorPassword = this._find('moderatorpw');
-        this.attendeePassword = this._find('attendeepw');
         this.origin = this._find('bbb-origin');
         this.originServerName = this._find('bbb-origin-server-name');
         this.createDate = this._find('createdate');

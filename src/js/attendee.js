@@ -35,7 +35,7 @@ export default class Attendee extends Node {
         if (this.hasVideo == 'true')
             status += '<i class="fas fa-video"></i>';
 
-        this._node = this._createBadgeItem(this.name, status, className);
+        this._node = this._createBadgeItem(this.name, status, className, true);
     }
 
 }

@@ -14,7 +14,7 @@ export default class AMeeting extends Node {
         this.id = this._find('sco-id');
         this.name = this._find('name');
         this.duration = this._find('length-minutes');
-        this.participantCount = this._find('participantcount', false);
+        this.participantCount = this._find('active-participants', false);
         this.dateBegin = this._find('date-begin');
         this.url = this._find('url-path');
     }

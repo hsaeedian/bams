@@ -14,8 +14,11 @@
         </button>
         <div class="collapse navbar-collapse" id="navbarCollapse">
             <ul class="navbar-nav me-auto mb-2 mb-md-0">
+                <?php if (current_user()['role'] === 'admin'): ?>
+                <li class="nav-item"><a data-admin-label="administration" class="nav-link" href="admin.php">Administration</a></li>
+                <?php endif; ?>
                 <li class="nav-item">
-                    <a id="logout-link" class="nav-link" href="<?php echo URL; ?>logout.php"></a>
+                    <form action="logout.php" method="post"><input type="hidden" name="csrf" value="<?php echo h(csrf_token()); ?>"><button id="logout-link" type="submit" class="nav-link border-0 bg-transparent"></button></form>
                 </li>
                 <li class="nav-item">
                     <a id="dark-link" class="nav-link"></a>

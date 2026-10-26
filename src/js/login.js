@@ -40,7 +40,7 @@ export default class Login extends Node {
 
                     this.request('api/login.php', dom => {
                         let returncode = dom.querySelector('returncode');
-                        if (returncode && returncode.innerText == 'SUCCESS') {
+                        if (returncode && returncode.textContent == 'SUCCESS') {
                             invalid.style.display = 'none';
                             form.classList.add('was-validated');
                             setTimeout(() => {
@@ -105,8 +105,7 @@ export default class Login extends Node {
         let val;
         if (!input)
             return;
-        val = input.value.replace(/\s/g, '');
-        input.value = val;
+        val = input.value;
         if (val == '') {
             input.classList.add('is-invalid');
             return false;

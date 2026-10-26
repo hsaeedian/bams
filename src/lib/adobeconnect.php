@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/store.php';
+require_once __DIR__ . '/util.php';
 /*
  * AdobeConnect 9 api client
  * @see https://github.com/sc0rp10/AdobeConnect-php-api-client
@@ -40,7 +42,7 @@ class AdobeConnectClient
     public function __construct($host, $login, $password, $root_folder = null, $template_folder = null)
     {
         $ch = curl_init();
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 1);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, 0);
         curl_setopt($ch, CURLOPT_REFERER, $host);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         $this->curl = $ch;
@@ -49,7 +51,8 @@ class AdobeConnectClient
         $this->password = $password;
         $this->root_folder = $root_folder;
         $this->template_folder = $template_folder;
-        $this->host = 'http://' . $host . '/';
+        $this->host = address($host) . '/';
+        curl_setopt_array($ch, [CURLOPT_COOKIEFILE=>'', CURLOPT_MAXFILESIZE=>8388608, CURLOPT_CONNECTTIMEOUT=>3, CURLOPT_TIMEOUT=>10, CURLOPT_SSL_VERIFYPEER=>true, CURLOPT_SSL_VERIFYHOST=>2, CURLOPT_PROTOCOLS=>CURLPROTO_HTTP | CURLPROTO_HTTPS]);
     }
 
     /**
@@ -464,54 +467,20 @@ class AdobeConnectClient
      */
     public function makeRequest($action, array $params = [])
     {
-        if ($this->breezecookie) {
-            $params['session'] = $this->breezecookie;
-        };
-
-        $url = $this->host;
-        $url .= 'api/xml?action=' . $action;
-        $url .= '&' . http_build_query($params);
-
-        curl_setopt($this->curl, CURLOPT_URL, $url);
-        curl_setopt($this->curl, CURLOPT_HEADER, 1);
-
+        // cURL keeps the authenticated cookie in memory, including enhanced-security sessions.
+        $url = $this->host . 'api/xml';
+        curl_setopt_array($this->curl, [CURLOPT_URL=>$url, CURLOPT_HEADER=>true, CURLOPT_POST=>true, CURLOPT_POSTFIELDS=>http_build_query(['action'=>$action]+$params, '', '&', PHP_QUERY_RFC3986)]);
         $response = curl_exec($this->curl);
-
-        if ($response === false) {
-            throw new Exception('Coulnd\'t perform the action: ' . $action . ' with [empty result]; ' . $url);
-        }
-
-        preg_match('/BREEZESESSION=(\w+);/', $response, $m);
-
-        if (isset($m[1])) {
-            $this->breezecookie = $m[1];
-        }
-
-        $temp = explode("\r\n\r\n", $response);
-
-        $result = '';
-
-        if (isset($temp[1])) {
-            $result = $temp[1];
-        }
-
-        libxml_use_internal_errors();
-        $xml = simplexml_load_string($result);
-        $errors = libxml_get_errors();
-
-        $json = json_encode($xml);
-        $data = json_decode($json, true);
-
-        if (
-            count($errors) > 0
-            ||
-            !isset($data['status']['@attributes']['code'])
-            ||
-            $data['status']['@attributes']['code'] !== 'ok'
-        ) {
-            throw new Exception('Coulnd\'t perform the action: ' . $action . ' with [ ' . var_export(trim($response), true) . ' ]; ' . $url);
-        };
-
+        if ($response === false) throw new RuntimeException('Adobe Connect request failed. Check reachability and TLS configuration.');
+        $code = curl_getinfo($this->curl, CURLINFO_RESPONSE_CODE);
+        if ($code !== 200) throw new RuntimeException('Adobe Connect returned HTTP ' . (int)$code . '.');
+        $size = curl_getinfo($this->curl, CURLINFO_HEADER_SIZE);
+        $headers = substr($response,0,$size);
+        if (preg_match('/BREEZESESSION=([^;\s]+);/', $headers, $m)) $this->breezecookie = $m[1];
+        $doc = parse_xml(substr($response,$size));
+        $xml = simplexml_import_dom($doc);
+        $data = json_decode(json_encode($xml),true);
+        if (($data['status']['@attributes']['code'] ?? '') !== 'ok') throw new RuntimeException('Adobe Connect rejected the API request. Check credentials and permissions.');
         return $data;
     }
 }
