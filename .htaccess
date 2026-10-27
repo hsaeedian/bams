@@ -1,0 +1,12 @@
+Options -Indexes
+IndexIgnore *
+
+# Paths are relative to the application, including subdirectory installs.
+# Apache/LiteSpeed must honor .htaccess and provide mod_rewrite.
+RewriteEngine On
+RewriteRule (^|/)\. - [F,L]
+RewriteRule ^(bin|tests|tools|docs|dist|config|var|backups|sessions|lib)(/|$) - [F,L,NC]
+
+<FilesMatch "(?i)^(README\.md|LICENSE|INSTALL\.txt|bootstrap\.example\.php|config\.php|setup\.key|installed\.lock|install\.pending\.php)$">
+    Require all denied
+</FilesMatch>

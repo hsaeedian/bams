@@ -1,0 +1,30 @@
+<!doctype html><html><head><meta charset="utf-8"><title>BAMS frontend regression</title></head><body><pre id="results">Running…</pre>
+<script type="module">
+import Node from '/js/node.js';
+import BMeeting from '/js/bmeeting.js';
+const results=[];
+function check(value,label) { if (!value) throw new Error(label); results.push(label); }
+try {
+ const fixtures=await (await fetch('/fixtures.json')).json();
+ for (const [i,f] of fixtures.entries()) {
+  const root=await new Promise(resolve=>new Node(null).request('/fixture-'+i+'.xml',resolve));
+  const model=new BMeeting(root.querySelector('meeting'),'server');
+  const a=model.node.querySelector('a.join');
+  check(model.id===f.id,'exact meeting ID '+i);
+  check(model.join===f.url,'XML extraction '+i);
+  check(a.getAttribute('href')===f.url && a.href===f.url,'anchor retains exact signed URL '+i);
+  const url=new URL(a.href);
+  check(url.searchParams.get('meetingID')===f.id && url.searchParams.get('fullName')===f.name && url.searchParams.get('password')===f.password,'decoded parameters '+i);
+  const [query,checksum]=url.search.slice(1).split('&checksum=');
+  const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-1',new TextEncoder().encode('join'+query+'fake-secret')))).map(v=>v.toString(16).padStart(2,'0')).join('');
+  check(digest===checksum,'checksum after frontend transport '+i);
+ }
+ const hostile=new Node(null)._createBadgeItem('Title','<img src=x onerror=alert(1)>','');
+ check(!hostile.querySelector('img'),'untrusted badge text escaped');
+ document.getElementById('results').textContent='PASS\n'+results.join('\n');
+ await fetch('/result',{method:'POST',body:JSON.stringify({ok:true,results})});
+} catch(error) {
+ document.getElementById('results').textContent='FAIL '+error.message;
+ await fetch('/result',{method:'POST',body:JSON.stringify({ok:false,error:error.message})});
+}
+</script></body></html>

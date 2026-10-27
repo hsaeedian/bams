@@ -1,0 +1,100 @@
+<?php
+// Offline tests: no production bootstrap, config, network, meetings or services.
+if (PHP_SAPI !== 'cli') exit(1);
+foreach (['pdo_sqlite','dom','curl','SimpleXML'] as $ext) if (!extension_loaded($ext)) { fwrite(STDERR,"Missing extension: $ext\n"); exit(2); }
+$dir = sys_get_temp_dir() . '/bams-test-' . bin2hex(random_bytes(8)); mkdir($dir,0700);
+file_put_contents($dir . '/bootstrap.php', '<?php return ' . var_export(['database'=>$dir . '/test.sqlite'],true) . ';');
+putenv('BAMS_BOOTSTRAP=' . $dir . '/bootstrap.php');
+register_shutdown_function(function () use ($dir) { foreach (glob($dir . '/*') as $p) unlink($p); rmdir($dir); });
+require __DIR__ . '/../meta.php';
+require __DIR__ . '/../lib/store.php';
+require __DIR__ . '/../lib/util.php';
+require __DIR__ . '/../lib/migrate.php';
+function ok($value, string $label): void { if (!$value) throw new RuntimeException('FAIL: ' . $label); echo "PASS: $label\n"; }
+function rejects(callable $fn, string $label, ?int $status = null): void {
+    try { $fn(); } catch (Throwable $e) { if ($status !== null && (!$e instanceof HttpError || $e->status !== $status)) throw $e; ok(true,$label); return; }
+    throw new RuntimeException('FAIL: ' . $label);
+}
+require __DIR__ . '/fixtures/legacy.php';
+$bad = USERS; $bad[1]['acl'] = ['nonexistent'];
+rejects(fn()=>migrate_legacy(SERVERS,$bad,URL,'owner'),'migration fails atomically on unknown ACL');
+schema(); ok((int)sql('SELECT count(*) FROM users')->fetchColumn()===0,'failed migration leaves no users');
+$missingId = SERVERS; unset($missingId[0]['id']);
+rejects(fn()=>migrate_legacy($missingId,USERS,URL,'owner'),'migration refuses missing original ID instead of generating one');
+rejects(fn()=>migrate_legacy(SERVERS,USERS,URL,'missing'),'initial administrator must be selected explicitly');
+migrate_legacy(SERVERS,USERS,URL,'owner');
+$owner = getUser('owner'); $limited = getUser('limited'); $empty = getUser('legacy-empty');
+ok($owner['role']==='admin' && $limited['role']==='viewer','migration selects only one administrator');
+ok(password_verify('fake-owner-password',$owner['password_hash']) && $owner['password_hash']!=='fake-owner-password','migration hashes passwords');
+ok((bool)$empty['all_servers'] && !(bool)$limited['all_servers'],'legacy empty ACL is explicitly migrated to all servers');
+ok(array_column(sql('SELECT id FROM servers ORDER BY id')->fetchAll(),'id')===['1','node-2'],'stable server IDs preserved');
+rejects(fn()=>migrate_legacy(SERVERS,USERS,URL,'owner'),'repeat migration refuses to overwrite data');
+$server = sql("SELECT * FROM servers WHERE id='1'")->fetch();
+$ids = ['normal','class-375-122[0]','class-375-122[12]',' space فارسی \\ ','&+=%?#'];
+foreach ($ids as $id) {
+    $params = ['fullName'=>' علی &+ =%?# \\ ','meetingID'=>$id,'password'=>' pass&+=%?#\\ '];
+    $url = completeUrl($server,'join',$params);
+    $query = parse_url($url,PHP_URL_QUERY); $parts = explode('&checksum=',$query); parse_str($parts[0],$decoded);
+    ok($decoded===$params,'exact raw values round trip case ' . array_search($id,$ids,true));
+    ok(hash_equals(sha1('join' . $parts[0] . $server['secret']),$parts[1]),'checksum covers exact final query');
+    if (str_contains($id,'[')) ok(str_contains($url,rawurlencode($id)),'brackets RFC3986 encoded');
+    $doc = new DOMDocument('1.0','UTF-8'); $root = $doc->createElement('response'); $doc->appendChild($root); xml_text($root,'join',$url);
+    $parsed = parse_xml($doc->saveXML()); ok($parsed->getElementsByTagName('join')->item(0)->textContent===$url,'XML text node round trip');
+}
+$doc = parse_xml('<response><returncode>SUCCESS</returncode><meetings><meeting><meetingID>class[0]</meetingID><moderatorPW>p&amp;+</moderatorPW><attendeePW>private</attendeePW></meeting></meetings></response>');
+sanitize_meetings($doc,$server,'کاربر');
+ok(!$doc->getElementsByTagName('moderatorPW')->length && !$doc->getElementsByTagName('attendeePW')->length,'meeting credential fields removed');
+rejects(fn()=>parse_xml('<!DOCTYPE foo [<!ENTITY a SYSTEM "file:///etc/passwd">]><foo>&a;</foo>'),'XML external entities rejected');
+$_SESSION = [];
+rejects(fn()=>require_user(),'unauthenticated rejected',401);
+$_SESSION = ['uid'=>$limited['id'],'auth_version'=>$limited['auth_version']];
+$viewer = require_user();
+rejects(fn()=>require_user(true),'viewer administrator access rejected',403);
+rejects(fn()=>server_for($viewer,'1'),'server outside ACL rejected',403);
+ok(server_for($viewer,'node-2')['id']==='node-2','selected server accessible');
+$viewerData = ['id'=>$limited['id'],'username'=>'limited','name'=>'Viewer','role'=>'viewer','enabled'=>1,'all_servers'=>0,'acl'=>[],'password'=>''];
+save_user($viewerData,'owner'); ok(current_user()===null,'ACL update invalidates existing session');
+$limited = getUser('limited'); $_SESSION = ['uid'=>$limited['id'],'auth_version'=>$limited['auth_version']];
+rejects(fn()=>server_for(require_user(),'node-2'),'empty explicit ACL grants no access',403);
+$viewerData['all_servers']=1; save_user($viewerData,'owner');
+$limited = getUser('limited'); $_SESSION = ['uid'=>$limited['id'],'auth_version'=>$limited['auth_version']];
+ok(server_for(require_user(),'1')['id']==='1','explicit all servers grants access');
+$viewerData['enabled']=0; save_user($viewerData,'owner'); ok(current_user()===null,'disabled user existing session rejected');
+$ownerData = ['id'=>$owner['id'],'username'=>'owner','name'=>'Owner','role'=>'viewer','enabled'=>1,'all_servers'=>1,'password'=>''];
+rejects(fn()=>save_user($ownerData,'owner'),'last administrator cannot be demoted');
+$ownerData['role']='admin'; $ownerData['enabled']=0;
+rejects(fn()=>save_user($ownerData,'owner'),'last administrator cannot be disabled');
+rejects(fn()=>delete_record('user',(string)$owner['id'],'owner',true),'last administrator cannot be deleted');
+rejects(fn()=>delete_record('server','1','owner',false),'delete requires explicit confirmation');
+$new = ['username'=>'new','name'=>'New','role'=>'viewer','enabled'=>1,'all_servers'=>0,'password'=>'fake-new-password','acl'=>['1']];
+$uid = save_user($new,'owner'); ok($uid>0,'user create');
+rejects(fn()=>save_user($new,'owner'),'unique username enforced');
+$new['id']=$uid; $new['password']='fake-reset-password'; save_user($new,'owner');
+ok(password_verify('fake-reset-password',getUser('new')['password_hash']),'password reset hashes new password');
+delete_record('user',(string)$uid,'owner',true); ok(getUser('new')===null,'user deletion');
+$d = ['id'=>'browser-supplied-id','type'=>'B','title'=>'Private test','domain'=>'https://10.0.0.2:8443','secret'=>'fake-secret','enabled'=>1];
+$sid = save_server($d,'owner');
+ok((bool)preg_match('/^srv-[a-f0-9]{32}$/D',$sid) && $sid !== $d['id'],'server ID generated by backend');
+$other = $d; unset($other['id']); $otherId = save_server($other,'owner');
+ok($otherId !== $sid,'new server IDs differ and missing ID accepted');
+delete_record('server',$otherId,'owner',true);
+$old = sql('SELECT * FROM servers WHERE id=?',[$sid])->fetch();
+$d['edit_id']=$sid; $d['id']='attempt-to-change-id'; $d['secret']=''; $d['title']='Changed';
+ok(save_server($d,'owner') === $sid,'server ID stable on edit despite submitted replacement');
+$changed = sql('SELECT * FROM servers WHERE id=?',[$sid])->fetch(); ok($changed['secret']===$old['secret'] && $changed['title']==='Changed','server edit preserves blank credential');
+$d['secret']='fake-replacement'; $d['enabled']=0; save_server($d,'owner');
+$admin = $owner; $admin['acl']=[];
+rejects(fn()=>server_for($admin,$sid),'disabled server excluded even for administrator',403);
+ok(sql('SELECT secret FROM servers WHERE id=?',[$sid])->fetchColumn()==='fake-replacement','explicit secret replacement');
+foreach (['file:///etc/passwd','https://user:pass@host.invalid','https://host.invalid/path','ftp://host.invalid','https://host.invalid/?x=y'] as $url) rejects(fn()=>address($url),'invalid server origin rejected');
+ok(address('http://192.168.1.1:8080')==='http://192.168.1.1:8080','private network origin allowed');
+delete_record('server',$sid,'owner',true); ok(!sql('SELECT id FROM servers WHERE id=?',[$sid])->fetch(),'server delete');
+save_settings(['app_url'=>'https://test.example.invalid/subdir'],'owner'); ok(setting('app_url')==='https://test.example.invalid/subdir/','application URL setting connected');
+$_SERVER['REQUEST_METHOD']='GET'; rejects(fn()=>require_post(),'GET state changes rejected',405);
+$_SERVER['REQUEST_METHOD']='POST'; $_POST=[]; rejects(fn()=>require_post(),'missing CSRF rejected',403);
+$_POST=['csrf'=>'invalid']; rejects(fn()=>require_post(),'invalid CSRF rejected',403);
+$_POST=['csrf'=>csrf_token()]; require_post(); ok(true,'valid CSRF accepted');
+$audit = json_encode(sql('SELECT actor,action,target,created_at FROM audit')->fetchAll());
+foreach (['fake-secret','fake-replacement','fake-new-password','fake-reset-password','checksum='] as $secret) ok(!str_contains($audit,$secret),'audit excludes sensitive values');
+ok((int)sql('SELECT count(*) FROM audit')->fetchColumn()>5,'administrative actions audited');
+echo "All offline PHP tests passed.\n";
