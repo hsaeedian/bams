@@ -1,136 +1,241 @@
-# BAMS
+# BAMS 1.3.2
 
-PHP/Bootstrap monitoring for BigBlueButton and Adobe Connect, with server/user administration, auditing, and English/Persian UI. Upstream: [geraked/bams](https://github.com/geraked/bams). License: [MIT](LICENSE).
+Monitor BigBlueButton and Adobe Connect, manage servers and users, and control access through an English/Persian interface with RTL support.
 
-## cPanel installation: browser + MariaDB
+Fork: [hsaeedian/bams](https://github.com/hsaeedian/bams) · Upstream: [geraked/bams](https://github.com/geraked/bams) · [MIT license](LICENSE)
 
-**No terminal or SQLite is required.** Use [docs/cpanel-install.md](docs/cpanel-install.md) for the full walkthrough. A web-only upload archive is generated at `dist/bams-cpanel.zip`.
+## Hosting-ready project layout
 
-1. In cPanel **Database Wizard**, create a **new empty database** and its user. Assign that user privileges on that database. Use the full names including the cPanel prefix. This is done in cPanel, not by PHP; the installer does not need database/user creation privileges. See [cPanel Database Wizard](https://docs.cpanel.net/cpanel/databases/mysql-database-wizard/).
-2. Upload/extract `bams-cpanel.zip` into `public_html/bams/` (or your chosen web directory). Its `index.php` and `install.php` go directly in that directory. Delete the uploaded ZIP after extraction.
-3. Visit `https://YOUR-DOMAIN/bams/install.php`. An unconfigured application redirects there automatically.
-4. Generate/download `setup.key` on that page, then upload it with cPanel File Manager into the **private folder displayed by the installer**, outside `public_html`. Create that folder with permissions 0700 and set the key file to 0600. Enable Show Hidden Files in File Manager. This one-time owner check prevents another visitor claiming your new site; it does not require code/configuration editing.
-5. In the browser, enter MariaDB host/port/database/user/password, choose the first administrator's username/display name/password, confirm the application URL, and install.
-6. Log in and add BBB/Adobe servers in Administration.
-
-The installer saves database credentials privately, hashes the administrator password, and locks itself after installation. It cannot reset an existing administrator or overwrite an installed database. Its database check rejects unrelated/existing tables. There is no default administrator/password and no public PHP configuration editor. GET requests never run installation; POST requires a session CSRF token and private setup key before any database connection.
-
-The setup key is generated with browser cryptographic randomness and never bundled with source. Passwords are not prefilled or echoed on errors. The setup key and pending file are removed after successful installation. You can additionally remove the public `install.php` after verifying the installation; that is an optional operator action, not a source deletion made here.
-
-If installation reports a generic failure, see the [1.3.1 diagnostic update and File Manager troubleshooting steps](docs/installer-troubleshooting.md). It identifies inaccessible private folders and database failure steps/codes without revealing credentials.
-
-## Requirements and directory layout
-
-- **PHP 8.2+**, PDO MySQL (`pdo_mysql`), cURL, DOM/libxml, SimpleXML, sessions, JSON/hash/password support.
-- **MariaDB 10.6+**, InnoDB, utf8mb4. The database/user must be provisioned in cPanel. Shared/nonempty databases are refused by the installer; use a dedicated BAMS database.
-- HTTPS for passwords and sessions; outbound access to the configured BBB/Adobe servers.
-- A PHP-writable private folder outside all public document roots. Public application files do not require write access.
-
-Typical archive deployment:
+The current application lives directly in the repository root. It replaces the old `src/` layout and the extracted application previously kept in `dist/bams-cpanel/`. You do not need to build a ZIP to use this version.
 
 ```text
-/home/ACCOUNT/public_html/bams/              public application: contents of src
-/home/ACCOUNT/.bams-<site-id>/                private folder displayed in installer
-  bootstrap.php                             MariaDB connection settings, 0600
-  installed.lock                            durable setup lock
-  .install.lock                             installation concurrency lock
+bams/
+  index.php                 Monitoring dashboard
+  install.php               Browser installer
+  admin.php                 Servers, users, settings, and audit log
+  login.php, logout.php     Authentication
+  meta.php                  Application version
+  .htaccess                 Directory and development-file access rules
+  api/, lib/                Application services
+  css/, js/, fonts/         Frontend assets
+  images/, plugins/         Images and bundled frontend libraries
+  bin/, tests/, tools/      Optional development and CLI utilities
+  docs/                     Installation and technical documentation
 ```
 
-The site ID is derived from the public application's absolute path. When moving to another filesystem location, the default private-folder name changes: preserve/restore the private configuration and use the new displayed location, or set an explicit `BAMS_PRIVATE_DIR`/`BAMS_BOOTSTRAP` through trusted hosting configuration. Do not re-run initial setup against an installed database. Paths are never selected by HTTP form fields.
+`dist/` is optional generated packaging output, not the application source. Database credentials and installed data live outside the public application directory.
 
-For a full source checkout, serve **only `src/`**, keeping `bin`, tests, docs, and private data outside the document root. cPanel uploads may instead copy just `src`'s contents into a public folder; the archive does exactly that. The complete repository must not be uploaded into a public directory. The packaging script uses an explicit source allowlist and excludes the legacy `src/config.php`.
+## Features
 
-The cPanel installer automatically selects a private folder outside the ancestor `public_html`; in other layouts, the default is `<project>/config`. Existing private `<project>/config/bootstrap.php` files are recognized for backward compatibility. Advanced deployments may set `BAMS_BOOTSTRAP=/absolute/private/bootstrap.php`, or `BAMS_PRIVATE_DIR=/absolute/private/directory`. The web installer writes only the standard `bootstrap.php` basename. Existing configurations are never overwritten. A private bootstrap returns an array like [bootstrap.example.php](bootstrap.example.php); example database credentials are fictitious. Do not edit the old `src/config.php` to configure this version.
+- Browser-based MariaDB installation on cPanel, without a hosting terminal, SQLite, SQL import, or editing PHP credentials.
+- Server administration with automatically generated IDs, enable/disable controls, and read-only BBB/Adobe connection tests.
+- Administrator/viewer roles, per-server permissions, hashed passwords, session invalidation after user edits, and protection for the last active administrator.
+- Application URL settings and a paginated audit log for administrative changes.
+- Correct BBB join URL encoding for bracketed IDs, Persian names, spaces, and reserved characters.
+- English/Persian installation, administration, and monitoring interfaces.
+- Installer diagnostics for private-folder access and database failures without displaying credentials.
 
-PHP must be allowed to access the private directory. If cPanel `open_basedir` blocks access, ask the provider to allow that private directory; the installer will not put secrets in `public_html` as a fallback. Some hosts disable PHP `link()`, which this installer uses to publish private files atomically without replacing existing files; the installer returns a sanitized error if so. Source trees must never be made broadly writable; do not use `chmod -R 777`.
+## Requirements
 
-MariaDB schema creation implicitly commits and cannot be rolled back ([MariaDB reference](https://mariadb.com/docs/server/reference/sql-statements/transactions/sql-statements-that-cause-an-implicit-commit)). The installer uses a private pending token and a database ownership marker, creates only its own initial schema, then inserts administrator/settings/audit in an InnoDB transaction. Same-site filesystem/advisory locks prevent concurrent setup; a database row lock serializes application writes and last-administrator decisions. Empty tables can remain after a failed DDL statement. Retry using the same database/user and private pending state. Never remove data as an automatic recovery action. If the administrator transaction committed before private bootstrap publication failed, retry publishes the configuration **without changing the administrator password**; use the original password.
+- PHP **8.2+** with PDO MySQL (`pdo_mysql`), cURL, DOM/libxml, SimpleXML, sessions, JSON, hash, and password support.
+- MariaDB **10.6+**, InnoDB, and utf8mb4.
+- HTTPS and outbound access to your BBB/Adobe servers.
+- Apache/LiteSpeed with `.htaccess` support and `mod_rewrite` for the supplied access rules. Other servers need equivalent rules before serving the repository root.
+- A PHP-writable private folder outside `public_html` and every public document root.
 
-## Administration and permissions
+## Choose your hosting environment
 
-Administrator navigation provides Monitoring dashboard, Servers, Users, Settings, and Audit log. English/Persian localization and RTL styling remain supported, including installation. Tables scroll on small screens.
+BAMS uses the same public files and browser installer on each host. The panel name does not guarantee compatibility: confirm the PHP extensions, MariaDB version, HTTPS, private-folder access, and web-server rules above.
 
-- **Servers:** list, create, edit, enable/disable, and explicitly confirm deletion. New server IDs are generated automatically on the backend when saved; no manual ID is needed. IDs remain stable on editing and legacy migration preserves original IDs. Configure display title, BBB/Adobe type, HTTP(S) origin/port, BBB API path/shared secret, or Adobe username/password. Private-network hosts are allowed; URL credentials, paths, fragments, and queries are rejected in server origins. Existing credentials are never prefilled/returned. Empty credential fields preserve stored values; nonempty values explicitly replace them.
-- **Connection tests:** administrators only, POST + CSRF; test unsaved values using stored credentials when fields are empty. Three-second connect/ten-second request timeouts, TLS verification, no redirects. BBB reads `getMeetings`; Adobe authenticates and reads `common-info` (up to twenty seconds total). Tests never create, join, or end meetings, and never save configuration. Errors are sanitized.
-- **Users:** unique case-sensitive usernames, display names, administrator/viewer roles, enable/disable, explicit all-server permission or selected-server ACLs, password resets, and confirmed deletion. New/reset passwords require 12–72 bytes. Hashes use `password_hash()`/`password_verify()`; plaintext user passwords are never stored in the new database or returned. Empty edit passwords preserve the hash.
-- **Administrator access:** administrators always access every **enabled** server. Viewers with an empty selected-server list access none. The last active administrator cannot be deleted, disabled, or demoted. Every user edit invalidates existing sessions, including password/role/ACL changes; your own administrator edits require logging in again.
-- **Settings:** application URL drives redirects, asset URLs, and secure-cookie behavior. Include your subdirectory. A wrong URL can break navigation; a trusted operator can restore `settings.app_url` using phpMyAdmin after taking a backup. No public SQL/configuration editor is provided.
-- **Audit:** transactional records of actor username, action, target identifier, and UTC timestamp for administrative writes; updates cover credentials, status, roles and ACLs; password resets also have their own action. No passwords, secrets, request bodies, session IDs, or signed URLs are recorded. Paginated log; not a tamper-proof external security log.
+| Environment | Where to create the database | Typical upload location |
+| --- | --- | --- |
+| cPanel | Database Wizard / Manage My Databases | `/home/ACCOUNT/public_html/bams/` |
+| DirectAdmin | User Level → MySQL Management / Databases | `/home/ACCOUNT/domains/DOMAIN/public_html/bams/` |
+| Plesk | Websites & Domains → Databases | The domain's document root, often `httpdocs/bams/` |
+| Other shared hosting | The provider's database-management page | The public document root shown by the provider |
+| VPS / dedicated server | Provision a dedicated MariaDB database and user yourself | A document root configured in Apache or Nginx |
 
-Every authenticated request reloads the user's current enabled status, role, ACL, and authentication version. Disabled servers are excluded from monitoring, resource reads, and joins even for administrators. APIs return 401/403 and stop execution. Session cookie names are isolated per installation path; upgrades to this version require signing in again. Login regenerates session IDs; cookies use HttpOnly/SameSite, and Secure for HTTPS (or an HTTPS configured application URL). Forwarded headers are not trusted; use the correct HTTPS URL for a TLS-terminating proxy. Login limits ten failures per address/username per fifteen minutes. Login, logout, administration and installation changes require POST/CSRF; GET logout is rejected.
+Upload the public application files listed in the cPanel walkthrough below, then open `https://YOUR-DOMAIN/bams/install.php`. All environments use the same database/admin fields. Use the actual database host, port, full database name, and username supplied by the host. A menu labelled “MySQL” can manage MariaDB, but confirm the actual engine/version with your provider. This release's documented database requirement is MariaDB 10.6+; other engines are not claimed tested.
 
-## BBB join URL correction
+### DirectAdmin
 
-Both join URL paths now share `completeUrl()`, which accepts raw arrays and calls `http_build_query(..., PHP_QUERY_RFC3986)` once ([PHP reference](https://www.php.net/manual/en/function.http-build-query.php)). The checksum covers the method, those exact serialized bytes, and the secret; only the checksum is appended afterward. `[0]` becomes `%5B0%5D`; `[12]`, spaces, Persian names, backslashes, and reserved `& + = % ? #` values survive exact decoding. Input values are not HTML-escaped, stripped, or trimmed as a substitute for encoding.
+1. Select the domain and choose PHP 8.2+ with the required extensions using the options your provider exposes.
+2. At **User Level → MySQL Management**, choose **Create new Database**. Create a dedicated empty database and its user; save the full names and password. Ensure that user has privileges on this database. [DirectAdmin database guidance](https://docs.directadmin.com/other-hosting-services/mariadb-mysql/phpmyadmin.html).
+3. Upload the deployment files into the domain's HTTPS document root, for example `domains/DOMAIN/public_html/bams/`. Check whether HTTPS uses `public_html` or a separate `private_html`; do not place the application in the wrong web root. Some DirectAdmin installations link `private_html` to `public_html`. [DirectAdmin private_html behavior](https://docs.directadmin.com/changelog/version-1.650.html).
+4. Open `/bams/install.php`. In File Manager, create the **exact private folder shown by the installer**, usually `domains/DOMAIN/.bams-<site-id>/`. Both `public_html` and `private_html` are public web folders; neither is a place for credentials or `setup.key`.
+5. Upload `setup.key` into that private folder (folder 0700, key 0600), then enter the database connection and new BAMS administrator details and finish installation.
+6. On Apache or compatible LiteSpeed hosting, include `.htaccess`. For Nginx-only or OpenLiteSpeed hosting, ask the provider to configure equivalent access rules; do not assume the supplied Apache directives are enforced.
 
-XML uses text nodes. Frontend requests use `DOMParser` in XML mode, case-insensitive tag lookup where needed, and direct anchor assignment without entity repair or double escaping. Dashboard meeting lookup compares attributes instead of interpolating IDs into CSS selectors, so brackets/quotes do not break it.
+### Plesk
 
-Both monitoring-generated links and `api/join.php` enforce authentication and ACLs. The standalone endpoint derives moderator credentials from BBB and uses the saved display name, ignoring browser-supplied passwords/names. The previous moderator join behavior is preserved: a BAMS viewer role is an administration permission, not a BBB attendee role. Raw attendee/moderator password fields are removed from monitoring XML. Signed URLs still inherently grant meeting access: never cache/log/share response bodies. Application responses use no-store/no-referrer.
+1. Open **Websites & Domains → Databases**, add a dedicated MariaDB database, and create a database user for that database. Record the connection details and ensure the user can create tables and read/write BAMS data. [Plesk database setup](https://docs.plesk.com/en-US/obsidian/administrator-guide/website-management/website-databases/creating-databases.65157/).
+2. Select PHP 8.2+ with the required extensions for the domain. Upload the public application files to its configured document root, for example `httpdocs/bams/`.
+3. Open `/bams/install.php`, create the displayed private folder **outside both `httpdocs` and `httpsdocs`**, upload the setup key, and enter the database/admin fields. Ask the provider to permit PHP access to that folder if `open_basedir` blocks it.
+4. Confirm which web server handles the site. Apache rules require `.htaccess` support; an Nginx-only setup needs equivalent server configuration.
 
-Adobe Connect remains supported, using safe POST encoding, [in-memory cookie sessions](https://helpx.adobe.com/adobe-connect/webservices/login-sessions-user-handle-requests.html), bounded verified TLS, and safe XML parsing. Optional resource monitoring reads the existing `/bams.php` (BBB) or `/bams` (Adobe) helper. No remote helper, BBB server, services, firewall, or web-server configuration was changed.
+### Other panels and VPS installations
 
-## Existing SQLite and legacy installations (advanced/optional)
+Create an empty MariaDB database and a separate user with privileges limited to that database. Configure PHP 8.2+ and HTTPS, upload only the runtime files, and use the browser installer. No SQL import is needed. On a VPS, the server administrator provisions the database/user before running the installer; BAMS does not need global database-creation permissions.
 
-The browser installer is for **fresh MariaDB setup**, not conversion of an existing SQLite/legacy installation. Existing SQLite bootstrap files and databases remain supported, requiring `pdo_sqlite` instead of `pdo_mysql`. Do not delete an installed SQLite database to switch engines; retain it and plan an explicit reviewed data migration. No data-engine conversion has been run here.
+The installer recognizes `public_html`, `private_html`, `httpdocs`, `httpsdocs`, and `htdocs`, and selects a private folder beside the public folder. With a custom document root it uses the server's configured `DOCUMENT_ROOT` to select an external folder. Always follow the displayed path. Trusted server/PHP-FPM configuration can override it with `BAMS_PRIVATE_DIR` or `BAMS_BOOTSTRAP`; these are not form fields or public configuration files.
 
-The earlier legacy configuration used `SERVERS`/`USERS` constants and plaintext passwords; it is never loaded by HTTP requests. Its optional CLI import remains available for operators who have CLI access. You do not need this path for a new cPanel installation. With a private bootstrap and an empty destination prepared, choose exactly one existing legacy username as initial administrator:
+For Nginx or another server that ignores `.htaccess`, configure equivalent blocks for hidden paths, `bin/`, `tests/`, `tools/`, `docs/`, `dist/`, `config/`, `var/`, `backups/`, `sessions/`, and direct requests to `lib/`. Also deny direct requests for configuration examples, setup files, and legacy `config.php`. Continue allowing the public PHP entry points and frontend assets. The PHP built-in server is for isolated local development, not production hosting.
+
+## Install on cPanel and set up the database
+
+### 1. Create a database and database user
+
+In cPanel, open **Database Wizard** (your host may label it **MySQL Database Wizard**). See the [official cPanel database wizard instructions](https://docs.cpanel.net/cpanel/databases/mysql-database-wizard/):
+
+1. Create a **new, empty database**, for example `bams`.
+2. Create a database user, for example `bamsuser`, with a strong password. Save that password privately.
+3. Add that user to the new database and select **ALL PRIVILEGES for this database only**.
+4. Note the complete database name and username displayed by cPanel, including the account prefix.
+
+For example, if the cPanel account is `myaccount`, the full names might be `myaccount_bams` and `myaccount_bamsuser`. Use the actual names cPanel displays. Do not use a database containing WordPress or another application's tables; the installer requires a dedicated database.
+
+### 2. Upload the application
+
+In cPanel **File Manager**, create `public_html/bams/` and upload the application's root PHP files, `.htaccess`, and these folders:
+
+```text
+api/  lib/  css/  js/  fonts/  images/  plugins/
+```
+
+`index.php` and `install.php` must be directly inside `public_html/bams/`. Enable **Show Hidden Files** so `.htaccess` is included. The application does not need `bin/`, `tests/`, `tools/`, `docs/`, `.git/`, `.idea/`, or `bootstrap.example.php` on the web host. The optional package builder below selects only deployment files for you.
+
+### 3. Prepare the private setup folder
+
+Open `https://YOUR-DOMAIN/bams/install.php`:
+
+1. Click **Generate and download setup.key** and keep the installer page open.
+2. In File Manager, create the exact private folder displayed by the installer, usually `/home/YOUR-ACCOUNT/.bams-<site-id>/`, outside `public_html`.
+3. Set that folder's permissions to **0700**. Upload `setup.key` into it and set the file's permissions to **0600**.
+
+The private folder must be accessible and writable by PHP. If the provider's `open_basedir` or ownership settings prevent access, ask the provider to allow that private folder. Public application files do not need write access.
+
+### 4. Enter the database settings in the installer
+
+Return to the installer and fill in:
+
+| Field | Example | What to enter |
+| --- | --- | --- |
+| Database host | `localhost` | Your hosting provider's database hostname. |
+| Database port | `3306` | The provider's MariaDB port. |
+| Database name | `myaccount_bams` | The full database name from cPanel. |
+| Database username | `myaccount_bamsuser` | The full user assigned to that database. |
+| Database password | Your saved password | The database user's password from step 1. |
+| Administrator username | `owner` | The new BAMS login username. |
+| Administrator display name | Your name | The name shown in BAMS. |
+| Administrator password | A new strong password | 12–72 bytes; confirm it in the second field. |
+| Application URL | `https://YOUR-DOMAIN/bams/` | The public HTTPS address, including the subdirectory. |
+
+The database account connects BAMS to MariaDB. The administrator account is your BAMS login; create its password separately. The values above are examples, not default credentials.
+
+Click **Install BAMS**. The installer creates its own tables and saves the database connection settings in private `bootstrap.php`. There is no SQL file to import and no public `config.php` to edit. It hashes the administrator password, removes the setup key and pending file on success, and locks installation.
+
+### 5. Log in and add your servers
+
+Follow the login link and use the administrator account you just created. In **Administration → Servers**, add your BigBlueButton or Adobe Connect connection details. Server IDs are generated automatically. Add other users and their server permissions under **Users**.
+
+Full walkthrough: [cPanel installation](docs/cpanel-install.md). For installation errors: [installer troubleshooting](docs/installer-troubleshooting.md).
+
+## Database configuration and private files
+
+A typical cPanel deployment uses:
+
+```text
+/home/ACCOUNT/public_html/bams/       Public application files
+/home/ACCOUNT/.bams-<site-id>/        Private installation directory
+  bootstrap.php                      Database settings (0600)
+  installed.lock                     Durable installer lock
+  .install.lock                      Installation concurrency lock
+```
+
+Do not upload credentials, SQL exports, backups, or setup files into the public application directory or Git. The installer never creates the database/user itself; you provision both in cPanel first. No default administrator password is bundled.
+
+The default private-folder name depends on the application's absolute filesystem path. Moving an installed application can change that name. Preserve its private configuration and use the location displayed at the new path, or set `BAMS_PRIVATE_DIR` / `BAMS_BOOTSTRAP` through trusted hosting configuration. Do not rerun setup against an installed database.
+
+On supported hosting layouts the private directory is selected as described above. The CLI fallback is `config/` beside the application directory, not inside it. Existing private bootstrap files at that location remain recognized only when outside the public web roots. Advanced configuration uses the array format in [bootstrap.example.php](bootstrap.example.php); operational values belong only in the private bootstrap. Existing SQLite installations remain supported with `pdo_sqlite` and a private database path, but the browser installer creates fresh MariaDB installations only.
+
+If installation fails, retry with the same database/user and existing private setup state. MariaDB table creation can leave empty tables after a failure. If the administrator was already saved, retry completes configuration publication without resetting its password. Keep the original password. Do not drop tables or delete private locks as a troubleshooting step.
+
+## Upgrade an existing deployment
+
+Back up the database and matching private `bootstrap.php`/lock before replacing public application files. Retain the application's existing public URL and filesystem path where possible. If deploying from an old checkout that served `src/`, map the new root application files to the **same public application directory**. There is no longer a `src/` folder to serve.
+
+Copy only the deployment files listed above, preserving private configuration, database, and server credentials. Do not run the fresh installer again. The structural change does not change the database schema. Sign in again after updating and check server access and permissions.
+
+The old public `src/config.php` is unused by this version and is not included in the new layout. Keep any needed legacy configuration only in a private backup. Existing SQLite or legacy constant-based installations need a planned migration to switch to MariaDB; uploading files does not convert their data.
+
+Optional trusted CLI import, with an empty destination and private bootstrap prepared:
 
 ```sh
-php bin/bams.php --migrate=/absolute/legacy/src/config.php --admin=chosen-existing-username
+php bin/bams.php --migrate=/absolute/private/legacy-config.php --admin=existing-username
 ```
 
-Run only against an explicitly authorized trusted PHP config (PHP config is executable code). The original file is not changed, output is suppressed, server IDs/connection fields/names/ACLs are imported, and plaintext user passwords become hashes. Only the selected user becomes administrator; others become viewers. Missing/empty legacy ACL means explicit all-server permission; nonempty ACLs remain selected lists. Unknown IDs/duplicate usernames fail instead of granting access. Bare server hosts become HTTPS origins; inspect legacy Adobe HTTP installations. Repeat import into initialized data is refused.
+The import hashes legacy user passwords, preserves server IDs and permissions, and selects exactly one existing user as administrator. The input PHP file is executable code; use only a trusted private file. Initialized destinations are refused.
 
-Import data is transactional. SQLite can roll back its initial schema too; MariaDB schema is created before the data transaction and may remain empty after failure. Preserve the source file and destination before retrying. No real legacy migration was performed here.
+## Administration and backups
 
-Fake fixture demonstration for a developer with PDO SQLite (not required on cPanel):
+Administrators can access every enabled server. Viewers receive explicit all-server access or a selected-server list; an empty selected list grants no access. Disabled servers cannot be monitored or joined. User edits invalidate sessions, including your own when editing your administrator account. The last active administrator cannot be disabled, deleted, or demoted.
+
+Connection tests do not save configuration or create/join/end meetings. Empty credential fields on edits preserve existing secrets. Stored secrets are never prefilled. Signed meeting links grant access; avoid logging or sharing them.
+
+Use cPanel Backup or phpMyAdmin for consistent MariaDB backups, and back up the matching private bootstrap/lock separately. SQL exports contain recoverable server credentials and must stay private. User passwords are hashed; database and BBB/Adobe credentials are protected by filesystem permissions, HTTPS, and private/encrypted backups rather than application encryption. Restore matching source, database, and private settings together. For SQLite, use its backup facility or stop writes before copying the database and any sidecars.
+
+## PyCharm “Unversioned Files”: what to keep
+
+“Unversioned” means a local file has not been added to Git. It does **not** mean the file is unused. After moving files from `src/` to the root, Git shows the old paths as deleted and the new paths as unversioned until you stage them together.
+
+| Files | Keep in the repository? | Needed on the web host? |
+| --- | --- | --- |
+| Root application PHP files, `.htaccess`, `api/`, `lib/` | Yes | Yes; these contain the installer, authentication, dashboard, and data layer. |
+| `css/`, `js/`, `fonts/`, `images/`, `plugins/` | Yes | Yes; these provide the interface, styling, icons, and scripts. |
+| `bin/` | Yes, for CLI setup and legacy imports | No, for a fresh browser installation. |
+| `tests/`, `tools/` | Yes, for validation and package building | No. |
+| `docs/`, `README.md`, `bootstrap.example.php` | Yes, for installation/reference | No, for runtime. Keep required license notices with distributed copies. |
+| `.gitignore` | Yes | No. |
+| `.idea/`, generated `dist/` | Ignore in Git | No. |
+| Real private bootstrap, databases, logs, setup keys, backups | Never commit | Store privately outside the public web root as required. |
+
+Do not delete the unversioned runtime files: the application depends on them. You can leave development-only folders out of your hosting upload without deleting them from your source project. The package builder does that automatically. Removing tests/tools from the repository would also remove the documented testing/build workflow.
+
+To record the new layout in PyCharm, select the intended **Unversioned Files → Add to VCS**, include the old `src/` deletions in the same commit, and review the changes. The terminal equivalent is `git add -A`, followed by reviewing `git diff --cached --stat` before committing. Git can then display matching delete/add pairs as renames. Ignored private/generated files are not added by a normal `git add -A`.
+
+## Optional cPanel ZIP build
+
+The root application files are ready to upload. To produce a deployment-only archive on your development computer:
 
 ```sh
-umask 077
-BAMS_DEMO_DIR=$(mktemp -d /tmp/bams-demo.XXXXXXXX)
-printf '<?php return ["database" => "%s/demo.sqlite"];\n' "$BAMS_DEMO_DIR" > "$BAMS_DEMO_DIR/bootstrap.php"
-BAMS_BOOTSTRAP="$BAMS_DEMO_DIR/bootstrap.php" php bin/bams.php --migrate="$PWD/tests/fixtures/legacy.php" --admin=owner
+python3 tools/package-cpanel.py
 ```
 
-Fresh advanced/CLI initialization is also retained with `--init --admin=NAME --url=https://bams.example.invalid/ --password-stdin`. Supply a 12–72 byte password on stdin, never as a command argument or committed file; `--init` refuses initialized destinations. The web installer replaces this requirement for normal cPanel use.
+This creates identical `dist/bams-cpanel-1.3.2.zip` and `dist/bams-cpanel.zip` archives from the root files. Upload and extract **one** archive into your public application folder, then remove the uploaded ZIP. Python is not needed on cPanel. `dist/` remains ignored by Git because it is generated output; publish ZIPs as GitHub Release attachments when needed.
 
-After an authorized legacy migration and verification, remove the **unused public `src/config.php`** from the new deployment/source synchronization. Preserve a matching private encrypted rollback copy outside the web root. If credentials were previously committed, remove them from your local Git index/history using your own reviewed process and rotate exposed secrets. `.gitignore` does not untrack existing files. The original configuration in this working copy remains unchanged.
+## Developer verification
 
-## Backup, restoration and upgrades
-
-Recoverable database/BBB/Adobe credentials are not application-encrypted. Their protection depends on private filesystem permissions, host security, HTTPS, and encrypted/private backups. Database readers can recover server credentials; user passwords are one-way hashes. There is **no encryption key** to back up. Encoding or keeping a key beside the data would not provide meaningful protection.
-
-For MariaDB, use cPanel Backup or phpMyAdmin to make a consistent InnoDB export/snapshot, following your hosting provider's backup procedure. Keep SQL exports outside public directories and source synchronization. Back up private bootstrap/lock separately. For SQLite, use its backup facility or stop all writes before copying; include journal/WAL sidecars when using storage snapshots. Never copy only an active SQLite file without a consistency strategy.
-
-Restore matching source, database and private bootstrap/lock with proper ownership and 0700/0600 permissions; verify login/ACLs before reopening writes. Source alone does not restore users, settings, credentials or audit history. Before upgrades retain a consistent backup and matching old source, test an isolated copy, and preserve the private configuration. This release has no automatic startup data/schema migrations. Future schema upgrades require an explicit versioned migration. Rollback restores the corresponding source/database/bootstrap set using your normal deployment procedure; the original legacy application needs its old private config and cannot read this database.
-
-## Developer verification and packaging
-
-Tests create private temporary configuration and fake servers; they do not load real config or contact real BBB/Adobe servers. No packages are installed or upgraded automatically. Supply PHP with the required extensions. Node 20+/Firefox and Python 3 are optional developer tools, not cPanel runtime requirements.
+Tests use isolated temporary data and fake servers. They do not need production credentials or access to real BBB/Adobe servers.
 
 ```sh
-find src bin tests -name '*.php' ! -path 'src/config.php' -exec php -l {} \;
-php -l bootstrap.example.php
-php tests/installer.php                # setup-key, input, CSRF, lock, private-file guards
-php tests/run.php                      # isolated SQLite CRUD/auth/join/migration regressions
-node tests/frontend.mjs                # frontend helper tests with mocks
-python3 tests/http_test.py             # temporary PHP/SQLite/mock-BBB HTTP server
-node tests/browser.mjs                 # actual Firefox XML/model/anchor test
-python3 tools/package-cpanel.py        # build/inspect web-only dist/bams-cpanel.zip
+find api lib bin tests -name '*.php' -exec php -l {} \;
+find . -maxdepth 1 -name '*.php' -exec php -l {} \;
+php tests/installer.php
+php tests/run.php
+node tests/frontend.mjs
+python3 tests/http_test.py
+# Optionally serve an extracted runtime-only package during the HTTP suite:
+# BAMS_TEST_APP_ROOT=/absolute/path/to/extracted-package python3 tests/http_test.py
+node tests/browser.mjs
+python3 tools/package-cpanel.py
 ```
 
-MariaDB integration uses a **separate disposable database**, never production. A developer must provision a dedicated empty DB ending in `_bams_test` and put its fictitious/test connection details in a private bootstrap outside source, using the format of `bootstrap.example.php`:
+The SQLite regression/HTTP suites need `pdo_sqlite`. The browser suite needs Node 20+ and Firefox. Local test servers require permission to bind a local port; PHP's development server does not enforce Apache `.htaccess` rules.
+
+MariaDB integration requires an explicitly provisioned disposable empty database ending in `_bams_test` and private test connection settings:
 
 ```sh
 BAMS_TEST_MYSQL_BOOTSTRAP=/absolute/private/test-bootstrap.php php tests/mariadb.php
 ```
 
-That suite refuses nonempty/non-test destinations, installs through the real installer service, tests MariaDB CRUD/passwords/sessions/ACLs/last-admin protection/settings/login upserts/native pagination, tests publication recovery without password resets, then drops only its known tables in the explicitly selected test database. Do not point it at a real deployment. The normal SQLite regression suite remains separately available so both engines can be checked.
-
-`PHP_BIN=/path/php python3 tests/http_test.py` and `FIREFOX_BIN=/path/firefox node tests/browser.mjs` select alternate runtimes. Local HTTP listeners must be allowed for HTTP/browser tests. [docs/verification.md](docs/verification.md) distinguishes executed static checks from unperformed PHP/MariaDB/browser tests. No real BBB join or cPanel installation is claimed verified.
-
-## Source download and Git boundaries
-
-Review [docs/change-manifest.md](docs/change-manifest.md) and [docs/mariadb-change-manifest.md](docs/mariadb-change-manifest.md) for project-relative changes. No original files were renamed/deleted. No GitHub authentication/remotes/clone/commits/pushes/PRs were used. Download source for PyCharm review; run the runtime tests on an isolated compatible host before your own commit/deployment.
-
-Exclude **from Git and ordinary source synchronization**: real `src/config.php`/legacy copies; private `bootstrap.php`; `.bams-*` private directories; `setup.key`; `install.pending.php`; installation locks; `var/`; all SQLite data/sidecars; MariaDB SQL exports; backups; logs; sessions; `.env*`; test runtime files. `dist/` is a generated upload artifact, not operational data or committed source. The fake fixtures and bootstrap example are distributable. cPanel backups/exports contain secrets and must never be placed in the public upload ZIP. `.gitignore` is only a convenience; review already tracked files yourself.
+Never use production for this suite: it creates and removes its test tables. See [verification notes](docs/verification.md) for checks that have actually been run. Building an archive does not verify installation on your cPanel host.
